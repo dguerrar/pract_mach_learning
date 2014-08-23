@@ -1,0 +1,191 @@
+Practical Machine Learning - Personal Activity Data
+========================================================
+
+
+## Summary
+
+Using devices such as Jawbone Up, Nike FuelBand, andFitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement - a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset).
+
+
+## Data Processing
+```{r}
+#load data in memory from previous execution
+load(file = "./fit.RData")
+load(file = "./cvalidation.RData")
+load(file = "./validation.RData")
+load(file = "./prediction.RData")
+```
+
+
+Fist, load the required libraries:
+```{r message=FALSE, warning=FALSE}
+#for downloading the files
+library(RCurl)
+#for training 
+library(caret)
+#for parallel computing
+library(doParallel)
+#miscelaneous
+library(Hmisc)
+library(randomForest)
+
+```
+
+
+The second step must be downloading the data files from its sources:
+```{r eval=FALSE}
+
+#downloading files
+URL <- "http://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+x<- getURL(URL)
+pml.training <- read.csv(textConnection(x),sep=",",na.strings = c("NA",""),header=TRUE)
+
+
+
+
+URL <- "http://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+y<- getURL(URL)
+pml.testing <- read.csv(textConnection(y),sep=",",na.strings = c("NA",""),header=TRUE)
+
+```
+
+
+
+## Exploratory Data Analysis
+The wotk to do is to analize the 'training' and set make a preduction for the attribute 'classe' that is not present at the 'testing' set.
+A 'validate' must be done by splitting the 'training' set at 80% and 20%.
+
+
+```{r eval=FALSE}
+#get 'classe' column fron training and save for later use
+classeTraining<-subset(pml.training,select=c("classe"))
+```
+
+There are 160 columns at the 'training' set. I only want the numeric ones, without NA values at any cells.
+Finally, the Covariance is analizes so only variables != 0 must be at the final 'training' set.
+
+```{r eval=FALSE}
+#delete NON numeric colums
+pml.training2<-pml.training[sapply(pml.training,is.numeric)]
+
+#setting repeatability
+set.seed(12345)
+
+#replacing NA values by 0.
+pml.training2[is.na(pml.training2)] <- 0
+
+#delete cero covariates
+nzv <- nearZeroVar(pml.training2)
+pml.training2<-pml.training2[-nzv]
+pml.training2<-cbind(classeTraining,pml.training2)
+```
+
+Now is time to create the 'training' and the 'validate' set: 80%/20% each:
+
+```{r eval=FALSE}
+#create the partition for training 80% training, 20% validate
+
+inTrain <- createDataPartition(pml.training2$classe, p=0.80, list=FALSE)
+training <- pml.training2[inTrain,]
+#create the partition for the validation
+validation <- pml.training2[-inTrain,]
+```
+
+
+
+Train the 'training' set with ***caret***. 'Training' set is pre-processed with the 'PCA' algorithm in order to reduce the columns to work in the train.
+
+```{r eval=FALSE}
+#set multiples cpu cores to run
+cl <- makeCluster(4)
+registerDoParallel(4)
+#getting num of nodes- for testing only
+getDoParWorkers()
+
+Sys.time() 
+#preprocess, only want principal components, all others columns out.
+#radom tree
+fit<-train(classe ~ .,preProcess="pca",data=training,method="rf",importance=TRUE)
+Sys.time() 
+
+```
+
+
+Train the 'validate' set with ***Cross Validation***. No preprocess method must be done.
+
+```{r eval=FALSE}
+Sys.time() 
+cvalidation <- train(validation$classe~.,data=validation, method="rf",trControl=trainControl(method = "cv"))
+save(cvalidation,file="cvalidation.RData")
+Sys.time() 
+
+
+#stop the cluster
+stopCluster(cl)
+```
+
+Now is time to do the testing with the 'testing' set. No preprocess method must be done.
+
+```{r eval=FALSE}
+
+#remove unused colums from testing
+testing<-pml.testing[ , -which(names(pml.testing) %nin% names(training))]
+test_prediction<-predict(fit, newdata=testing)
+
+```
+
+
+
+## Results
+
+First the Results from the train:
+
+```{r}
+fit
+fit$finalModel
+fit$preProcess
+```
+
+The pre-process get 27 components from the data set in order to reduce the columns to train.
+
+
+
+Results of the Cross Validation and the Confussion Matrix:
+```{r message=FALSE, warning=FALSE}
+cvalidation$resample
+cvalidation$results
+
+#print the confusion matrix between training and validation
+confusionMatrix(predict(cvalidation, newdata=validation), validation$classe)
+
+#print cross validation predictions
+cvalidation$finalModel
+```
+
+As you can see on the Validate Model, **OOB estimate of  error rate: 0.78%** 
+and  **Accuracy : 1** on **95% CI : (0.9991, 1)**
+
+With that info, I can expect a correct prediction in the testing set.
+
+
+
+
+Our predicion for the 20 records at the 'testing' set:
+```{r}
+test_prediction
+```
+
+
+
+```{r eval=FALSE}
+pml_write_files = function(x){
+  n = length(x)
+  for(i in 1:n){
+    filename = paste0("problem_id_",i,".txt")
+    write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+  }
+}
+pml_write_files(test_prediction)
+```
+
+
